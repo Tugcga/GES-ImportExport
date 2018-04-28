@@ -404,7 +404,7 @@ def add_nodes_and_links(root, bl_nodes, bl_links, is_texture_absolute_path, is_t
             n_type = str(bl_node.type)
             if (is_subtree is True and n_type != "GROUP_INPUT" and n_type != "GROUP_OUTPUT") or (is_subtree is False):
                 new_node = add_node_to_tree(root, bl_node, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
-                if str(bl_node.type) == "GROUP":
+                if str(bl_node.type) == "GROUP" and bl_node.node_tree is not None:
                     group_node = new_node.add_subtree()
                     add_nodes_and_links(group_node, bl_node.node_tree.nodes, bl_node.node_tree.links, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath, True)
     half_links = []
