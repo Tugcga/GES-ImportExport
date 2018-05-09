@@ -863,7 +863,7 @@ def save_ges_item(progress, name_prefix, root, item, is_absolute, ges_path, scen
                 saved_names.append(item)
                 item_xml = ET.SubElement(root, "light", {"name": item.name, "render": normalize_name(str(bpy.context.scene.render.engine))})
                 export_light(item_xml, item, item.data, only_local)
-        elif item.type == "EMPTY":
+        elif item.type == "EMPTY" or item.type == "ARMATURE":
             should_finish = False
             # saved_names.append(item.name)
             saved_names.append(item)
