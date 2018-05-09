@@ -12,6 +12,7 @@ Limitations:
 
 * No animations, skinning data and other rigs
 * Does not support import *.ges files, only export it
+* Works only with Blender 2.79 and next, released after april 2018
 
 ## How to use
 
