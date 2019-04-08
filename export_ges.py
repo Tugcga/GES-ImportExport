@@ -2,14 +2,12 @@ import bpy
 import os
 import shutil
 import xml.etree.cElementTree as ET
-import pickle
-# from io_scene_ges import gntd
-# from io_scene_ges import pmd
-# import gntd
 from . import gntd
-# import pmd
-from . import pmd
-from progress_report import ProgressReport
+from . import mdsf
+from bpy_extras.wm_utils.progress_report import (
+    ProgressReport,
+    ProgressReportSubstep,
+)
 
 
 bl_types = {"RGBA": "color4",
@@ -18,7 +16,26 @@ bl_types = {"RGBA": "color4",
             "SHADER": "closure",
             "BOOL": "bool"}
 
+node_type_normalizer = {"Valtorgb": "ColorRamp",
+                        "Combhsv": "CombineHSV",
+                        "Combrgb": "CombineRGB",
+                        "Combxyz": "CombineXYZ",
+                        "Rgbtobw": "RGBtoBW",
+                        "Sephsv": "SeparateHSV",
+                        "Seprgb": "SeparateRGB",
+                        "Brightcontrast": "BrightContrast",
+                        "CurveVec": "VectorCurves",
+                        "HueSat": "HueSaturationValue",
+                        "MixRgb": "MixRGB",
+                        "CurveRgb": "RGBCurves",
+                        "NewGeometry": "Geometry",
+                        "Rgb": "RGB",
+                        "TexCoord": "TextureCoordinate",
+                        "Uvmap": "UVMap",
+                        "VectMath": "VectorMath"}
+
 COLOR_CURVE_SAMPLES = 32
+GROUP_HASH_LENGH = 5
 
 
 def form_library_name(scene_path):
@@ -78,6 +95,14 @@ def normalize_name(name):
     for p in parts:
         str_array.append(p.title())
     return "".join(str_array)
+
+
+def normalize_node_type(name):
+    n = normalize_name(name)
+    if n in node_type_normalizer:
+        return node_type_normalizer[n]
+    else:
+        return n
 
 
 def get_blender_type(bl_input_type):
@@ -147,17 +172,46 @@ def get_file_path(image, is_texture_absolute_path, is_texture_copy, lib_name, ge
     return file_path
 
 
+def convert_file_path(raw_path, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath):
+    if len(raw_path) > 0:
+        abs_path = bpy.path.abspath(raw_path)
+        if is_texture_copy:
+            dir_path = os.path.split(gem_filepath)[0] + "\\" + str(lib_name) + "_textures"
+            # create directory if it is not exist
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path)
+            if os.path.isfile(abs_path):  # file exists, copy it
+                shutil.copy2(abs_path, dir_path)
+                abs_path = dir_path + "\\" + os.path.split(abs_path)[1]
+            else:
+                return None
+        if is_texture_absolute_path:
+            file_path = abs_path
+        else:
+            file_path = "\\\\" + os.path.relpath(abs_path, os.path.split(gem_filepath)[0])
+        return file_path
+    else:
+        return None
+
+
 # return answer in the form [(param_name, param_type(string),
 # param_value), ...] bsdf_node.add_parameter("InnerParameter", "vector3",
 # Normal(1.0))
 def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath):
     node_type = str(node.type)
     if node_type == "TEX_VORONOI":
-        return [("Coloring", "string", node.coloring)]
+        return [("Coloring", "string", node.coloring),
+                ("Distance", "string", node.distance),
+                ("Feature", "string", node.feature)]
     elif node_type == "TEX_MUSGRAVE":
         return [("Musgrave Type", "string", node.musgrave_type)]
     elif node_type == "TEX_POINTDENSITY":
-        return [("Space", "string", node.space), ("Interpolation", "string", node.interpolation)]
+        return [("Space", "string", node.space),
+                ("Interpolation", "string", node.interpolation),
+                ("Point Source", "string", node.point_source),
+                ("Radius", "float", node.radius),
+                ("Resolution", "int", node.resolution),
+                ("Particle Color Source", "string", node.particle_color_source)]
     elif node_type == "TEX_IMAGE":
         file_name = get_file_path(node.image, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
         to_return = [("Color Space", "string", node.color_space),
@@ -191,6 +245,12 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return [("Sky Type", "string", node.sky_type), ("Sun Direction", "vector3", gntd.Vector3(node.sun_direction[0], node.sun_direction[1], node.sun_direction[2])), ("Turbidity", "float", node.turbidity), ("Ground Albedo", "float", node.ground_albedo)]
     elif node_type == "TEX_WAVE":
         return [("Wave Type", "string", node.wave_type), ("Profile", "string", node.wave_profile)]
+    elif node_type == "TEX_IES":
+        file_name = convert_file_path(node.filepath, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
+        if file_name is None:
+            return []
+        else:
+            return [("Filename", "string", file_name)]
     elif node_type == "BSDF_GLOSSY":
         return [("Distribution", "string", node.distribution)]
     elif node_type == "BSDF_HAIR":
@@ -199,6 +259,8 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return [("Distribution", "string", node.distribution)]
     elif node_type == "BSDF_PRINCIPLED":
         return [("Distribution", "string", node.distribution), ("Subsurface Method", "string", node.subsurface_method)]
+    elif node_type == "BSDF_HAIR_PRINCIPLED":
+        return [("Parametrization", "string", node.parametrization)]
     elif node_type == "BSDF_GLASS":
         return [("Distribution", "string", node.distribution)]
     elif node_type == "BSDF_ANISOTROPIC":
@@ -214,15 +276,19 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
     elif node_type == "MIX_RGB":
         return [("Blend Type", "string", node.blend_type), ("Use Clamp", "bool", node.use_clamp)]
     elif node_type == "UVMAP":
-        return [("From Dupli", "bool", node.from_dupli), ("Attribute", "string", node.uv_map)]
+        return [("From Instancer", "bool", node.from_instancer), ("Attribute", "string", node.uv_map)]
     elif node_type == "ATTRIBUTE":
         return [("Attribute", "string", node.attribute_name)]
     elif node_type == "TEX_COORD":
-        return [("From Dupli", "bool", node.from_dupli)]
+        return [("From Instancer", "bool", node.from_instancer)]
     elif node_type == "TANGENT":
         return [("Direction Type", "string", node.direction_type), ("Axis", "string", node.axis), ("Attribute", "string", node.uv_map)]
     elif node_type == "VALUE":
         return [("Value", "float", node.outputs[0].default_value)]
+    elif node_type == "AMBIENT_OCCLUSION":
+        return [("Samples", "int", node.samples),
+                ("Inside", "bool", node.inside),
+                ("Only Local", "bool", node.only_local)]
     elif node_type == "WIREFRAME":
         return [("Use Pixel Size", "bool", node.use_pixel_size)]
     elif node_type == "RGB":
@@ -324,8 +390,21 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return []
 
 
-def add_node_to_tree(tree, node, is_texture_absolute_path=False, is_texture_copy=False, lib_name="", gem_filepath=""):
-    td_node = tree.add_node(normalize_name(node.type), node.name, node.label)
+def node_name(node):
+    node_type = node.type
+    if node_type == "GROUP":
+        return node.name + str(hash(node))[-GROUP_HASH_LENGH:]
+    else:
+        return node.name
+
+
+def add_node_to_tree(tree, node, nodes_counter, is_texture_absolute_path=False, is_texture_copy=False, lib_name="", gem_filepath=""):
+    node_type = normalize_node_type(node.type)
+    # node_name = node.name
+    n_name = node_name(node)
+    '''if node_type == "Group":
+        node_name += str(nodes_counter)'''
+    td_node = tree.add_node(node_type, n_name, node.label)
     input_index = 0
     for bl_input in node.inputs:
         t = get_blender_type(str(bl_input.type))
@@ -333,7 +412,7 @@ def add_node_to_tree(tree, node, is_texture_absolute_path=False, is_texture_copy
             # create default value
             default = get_blender_default_value(bl_input)
             if default is not None:
-                if normalize_name(node.type) == "VectMath" or normalize_name(node.type) == "Math" or (normalize_name(node.type) == "MixShader" and str(bl_input.name) != "Fac") or normalize_name(node.type) == "AddShader":  # for Math input ports (both Value in default) convert to Value1 and Value2
+                if normalize_node_type(node.type) == "VectorMath" or normalize_node_type(node.type) == "Math" or (normalize_node_type(node.type) == "MixShader" and str(bl_input.name) != "Fac") or normalize_node_type(node.type) == "AddShader":  # for Math input ports (both Value in default) convert to Value1 and Value2
                     input_index = input_index + 1
                     td_node.add_input(str(bl_input.name) + str(input_index), t, default)
                 else:
@@ -366,13 +445,13 @@ def get_in_socket_index(node, in_socket):
 
 
 def get_exeptional_suffix(node, in_socket):
-    if normalize_name(node.type) == "VectMath" or normalize_name(node.type) == "Math" or normalize_name(node.type) == "AddShader":
+    if normalize_node_type(node.type) == "VectorMath" or normalize_node_type(node.type) == "Math" or normalize_node_type(node.type) == "AddShader":
         index = get_in_socket_index(node, in_socket)
         if index is not None:
             return str(index + 1)
         else:
             return ""
-    elif normalize_name(node.type) == "MixShader" and in_socket.name != "Fac":
+    elif normalize_node_type(node.type) == "MixShader" and in_socket.name != "Fac":
         index = get_in_socket_index(node, in_socket)
         if index is not None:
             return str(index)
@@ -387,26 +466,27 @@ def add_link_to_tree(tree, link, is_subtree=False):
         n_from_type = str(link.from_node.type)
         n_to_type = str(link.to_node.type)
         if n_from_type == "GROUP_INPUT" and n_to_type != "GROUP_OUTPUT":
-            tree.add_external_input_connection(link.to_node.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket), link.from_socket.name)
+            tree.add_external_input_connection(node_name(link.to_node), link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket), link.from_socket.name)
         elif n_from_type != "GROUP_INPUT" and n_to_type == "GROUP_OUTPUT":
-            tree.add_external_output_connection(link.from_node.name, link.from_socket.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
+            tree.add_external_output_connection(node_name(link.from_node), link.from_socket.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
         elif n_from_type == "GROUP_INPUT" and n_to_type == "GROUP_OUTPUT":
             tree.add_external_throw_connection(link.from_socket.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
         else:
-            tree.add_connection(link.from_node.name, link.from_socket.name, link.to_node.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
+            tree.add_connection(node_name(link.from_node), link.from_socket.name, node_name(link.to_node), link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
     else:
-        tree.add_connection(link.from_node.name, link.from_socket.name, link.to_node.name, link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
+        tree.add_connection(node_name(link.from_node), link.from_socket.name, node_name(link.to_node), link.to_socket.name + get_exeptional_suffix(link.to_node, link.to_socket))
 
 
-def add_nodes_and_links(root, bl_nodes, bl_links, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath, is_subtree=False):
+def add_nodes_and_links(root, bl_nodes, bl_links, nodes_counter, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath, is_subtree=False):
     for bl_node in bl_nodes:
         if is_node_correct(bl_node):
             n_type = str(bl_node.type)
             if (is_subtree is True and n_type != "GROUP_INPUT" and n_type != "GROUP_OUTPUT") or (is_subtree is False):
-                new_node = add_node_to_tree(root, bl_node, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
+                new_node = add_node_to_tree(root, bl_node, nodes_counter, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
+                nodes_counter += 1
                 if str(bl_node.type) == "GROUP" and bl_node.node_tree is not None:
                     group_node = new_node.add_subtree()
-                    add_nodes_and_links(group_node, bl_node.node_tree.nodes, bl_node.node_tree.links, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath, True)
+                    add_nodes_and_links(group_node, bl_node.node_tree.nodes, bl_node.node_tree.links, nodes_counter, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath, True)
     half_links = []
     for bl_link in bl_links:
         if str(bl_link.from_node.type) != "REROUTE" and str(bl_link.to_node.type) != "REROUTE":
@@ -419,27 +499,27 @@ def add_nodes_and_links(root, bl_nodes, bl_links, is_texture_absolute_path, is_t
     links = []
     for l in half_links:
         if str(l.to_node.type) != "REROUTE" and is_node_correct(l.to_node):
-            to_node = SimpleNodeData(l.to_node.type, l.to_node.name, l.to_node.inputs)
+            to_node = SimpleNodeData(l.to_node.type, node_name(l.to_node), l.to_node.inputs)
             # to_socket = SimpleSocketData(l.to_socket.name)
             to_socket = l.to_socket
             # next we should find from_node
-            find_target = l.from_node.name
+            find_target = node_name(l.from_node)
             is_find = False
             l_index = 0
             while not is_find:
                 t_link = half_links[l_index]
-                if t_link.to_node.name == find_target:
+                if node_name(t_link.to_node) == find_target:
                     if str(t_link.from_node.type) != "REROUTE":
                         is_find = True
                     else:
                         l_index = 0
-                        find_target = t_link.from_node.name
+                        find_target = node_name(t_link.from_node)
                 else:
                     l_index = l_index + 1
                 if l_index >= len(half_links):
                     is_find = True
             if l_index < len(half_links):
-                from_node = SimpleNodeData(half_links[l_index].from_node.type, half_links[l_index].from_node.name)
+                from_node = SimpleNodeData(half_links[l_index].from_node.type, node_name(half_links[l_index].from_node))
                 from_socket = SimpleSocketData(half_links[l_index].from_socket.name)
                 links.append(SimpleLinkData(from_node, to_node, from_socket, to_socket))
     for link in links:
@@ -460,7 +540,8 @@ def actual_material_export(progress, file_path, is_texture_absolute, is_save_tex
             progress.step()
         if bl_material is not None and bl_material.node_tree is not None:
             td_node_tree = doc.add_material(str(bl_material.name), normalize_name(str(bpy.context.scene.render.engine)))
-            add_nodes_and_links(td_node_tree, bl_material.node_tree.nodes, bl_material.node_tree.links, is_texture_absolute, is_save_textures, library_name, file_path)
+            nodes_counter = 0
+            add_nodes_and_links(td_node_tree, bl_material.node_tree.nodes, bl_material.node_tree.links, nodes_counter, is_texture_absolute, is_save_textures, library_name, file_path)
         m_index = m_index + 1
     doc.write_xml(file_path)
     if is_progress:
@@ -518,7 +599,11 @@ def export_transform(root, object, only_local=False):
         ET.SubElement(root, "transform", {"space": "Global", "mode": "Column", "matrix": matrix_to_string(object.matrix_world)})
 
 
-def export_light(root, object, light, only_local=False):
+def export_visibility(root, hide_render, hide_viewport):
+    ET.SubElement(root, "visibility", {"render": str(not hide_render), "viewport": str(not hide_viewport)})
+
+
+def export_light(root, object, light, hide_mode=(False, False), only_local=False):
     is_cycles = bpy.context.scene.render.engine == "CYCLES"
     prop_dict = {}
     prop_dict["type"] = normalize_name(light.type)
@@ -545,7 +630,7 @@ def export_light(root, object, light, only_local=False):
         # for non-Cycles lights add strength
         prop_dict["strength"] = float_to_str(light.energy)
         # also existing of the shadows
-        prop_dict["cast_shadow"] = str(light.shadow_method != "NOSHADOW")
+        # prop_dict["cast_shadow"] = str(light.shadow_method != "NOSHADOW")
     if light.type == "SPOT":
         prop_dict["spot_size"] = float_to_str(light.spot_size)
         prop_dict["spot_blend"] = float_to_str(light.spot_blend)
@@ -555,6 +640,7 @@ def export_light(root, object, light, only_local=False):
         prop_dict["use_nodes"] = str(False)
     ET.SubElement(root, "properties", prop_dict)
     export_transform(root, object, only_local)
+    export_visibility(root, hide_mode[0], hide_mode[1])
 
 
 def export_ray_visibility(vis, use_shadow=False):
@@ -584,23 +670,23 @@ def export_background(root):
             prop_dict["ao_factor"] = str(world.light_settings.ao_factor)
             prop_dict["ao_distance"] = str(world.light_settings.distance)
             # settings
-            prop_dict["multiple_importance"] = str(world.cycles.sample_as_light)
-            prop_dict["max_resolution"] = str(world.cycles.sample_map_resolution)
-            prop_dict["max_bounces"] = str(world.cycles.max_bounces)
+            # prop_dict["max_resolution"] = str(world.cycles.sample_map_resolution)
+            # prop_dict["max_bounces"] = str(world.cycles.max_bounces)
             prop_dict["volume_sampling"] = normalize_name(world.cycles.volume_sampling)
             prop_dict["volume_interpolation"] = normalize_name(world.cycles.volume_interpolation)
             prop_dict["homogeneous_volume"] = str(world.cycles.homogeneous_volume)
             # ray visibility
-            ET.SubElement(world_xml, "visibility", export_ray_visibility(world.cycles_visibility))
+            ET.SubElement(world_xml, "ray_visibility", export_ray_visibility(world.cycles_visibility))
         ET.SubElement(world_xml, "properties", prop_dict)
 
 
-def export_object(root, object, over_matrix=None, only_local=False):
+def export_object(root, object, hide_mode=(False, False), over_matrix=None, only_local=False):
     # transforms
     if over_matrix is None:
         export_transform(root, object, only_local)
     else:
         ET.SubElement(root, "transform", {"space": "Global", "mode": "Column", "matrix": matrix_to_string(over_matrix)})
+    export_visibility(root, hide_mode[0], hide_mode[1])
     # materials
     materials = object.material_slots
     mat_data = {}
@@ -608,7 +694,7 @@ def export_object(root, object, over_matrix=None, only_local=False):
         mat_data["material_" + str(mat_index)] = materials[mat_index].name
     prop_materials = ET.SubElement(root, "material", mat_data)
     if bpy.context.scene.render.engine == "CYCLES":
-        ET.SubElement(root, "visibility", export_ray_visibility(object.cycles_visibility, True))
+        ET.SubElement(root, "ray_visibility", export_ray_visibility(object.cycles_visibility, True))
         prop_dict = {}
         prop_dict["shadow_catcher"] = str(object.cycles.is_shadow_catcher)
         # prop_dict["holdout"] = str(object.cycles.is_holdout)
@@ -617,7 +703,7 @@ def export_object(root, object, over_matrix=None, only_local=False):
         ET.SubElement(root, "properties", prop_dict)
 
 
-def export_null(root, null, only_local=False):
+def export_null(root, null, hide_mode=(False, False), only_local=False):
     # for null export only transforms
     export_transform(root, null, only_local)
 
@@ -727,6 +813,7 @@ def export_render_settings(root):
         if cycles.progressive == "PATH":
             sampling_dict["samples"] = str(cycles.samples)
         elif cycles.progressive == "BRANCHED_PATH":
+            sampling_dict["samples"] = str(cycles.aa_samples)
             sampling_dict["diffuse_samples"] = str(cycles.diffuse_samples)
             sampling_dict["glossy_samples"] = str(cycles.glossy_samples)
             sampling_dict["transmission_samples"] = str(cycles.transmission_samples)
@@ -736,6 +823,8 @@ def export_render_settings(root):
             sampling_dict["volume_samples"] = str(cycles.volume_samples)
         sampling_dict["volume_step_size"] = float_to_str(cycles.volume_step_size)
         sampling_dict["volume_max_steps"] = str(cycles.volume_max_steps)
+        sampling_dict["sample_all_lights_direct"] = str(cycles.sample_all_lights_direct)
+        sampling_dict["sample_all_lights_indirect"] = str(cycles.sample_all_lights_indirect)
         sampling_xml = ET.SubElement(render_xml, "sampling", sampling_dict)
         # light paths
         bounces_dict = {}
@@ -747,11 +836,13 @@ def export_render_settings(root):
         bounces_dict["volume_bounces"] = str(cycles.volume_bounces)
         bounces_dict["caustics_reflective"] = str(cycles.caustics_reflective)
         bounces_dict["caustics_refractive"] = str(cycles.caustics_refractive)
+        bounces_dict["filter_glossy"] = str(cycles.blur_glossy)
         path_xml = ET.SubElement(render_xml, "bounces", bounces_dict)
         # film settings
         film_dict = {}
         film_dict["exposure"] = float_to_str(cycles.film_exposure)
-        film_dict["transparent"] = str(cycles.film_transparent)
+        film_dict["film_transparent"] = str(cycles.film_transparent)
+        film_dict["film_transparent_glass"] = str(cycles.film_transparent_glass)
         film_dict["filter"] = normalize_name(cycles.pixel_filter_type)
         if cycles.pixel_filter_type == "BLACKMAN_HARRIS" or cycles.pixel_filter_type == "GAUSSIAN":
             film_dict["width"] = float_to_str(cycles.filter_width)
@@ -791,7 +882,7 @@ def export_render_settings(root):
         simplify_xml = ET.SubElement(render_xml, "simplify", simpl_dict)
 
 
-def export_geo(mesh, item_name, ges_path):
+'''def export_geo_pickle(mesh, item_name, ges_path):
     dir_path = os.path.split(ges_path)[0] + "\\" + os.path.splitext(os.path.basename(ges_path))[0] + "_meshes"
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
@@ -817,6 +908,59 @@ def export_geo(mesh, item_name, ges_path):
         return geo_path
     else:
         bpy.data.meshes.remove(new_mesh)
+        return None'''
+
+
+def export_geo(original_mesh, item_name, ges_path):
+    dir_path = os.path.split(ges_path)[0] + "\\" + os.path.splitext(os.path.basename(ges_path))[0] + "_meshes"
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    geo_path = dir_path + "\\" + item_name + ".geo"
+    mesh = original_mesh.to_mesh(bpy.context.depsgraph, True)
+    saver = mdsf.MeshSerializer()
+    container = saver.create_container()
+    point_positions = []  # each position should be tuple (x, y, z)
+    polygon_vertices = []  # [(p_index, v_index), ...], where v_index is the index of vertex, pairs enumerate for the first polygon, then for the second and so on
+    polygon_normals = []  # [(p_index, c_index, n_x, n_y, n_z), ...], where c_index - index of the polygon corner
+    # fill the data arrays
+    # 1. point positions
+    for v in mesh.vertices:
+        point_positions.append((v.co[0], v.co[1], v.co[2]))
+    container.add_data(point_positions, data_name="point positions", data_context=mdsf.KEY_CONTEXT_VERTEX, data_type=mdsf.KEY_TYPE_POSITION)
+    # 2. polygons
+    poly_index = 0
+    poly_sizes = []  # contains sizes of polygons
+    for poly in mesh.polygons:
+        poly_sizes.append(len(poly.vertices))
+        for v in poly.vertices:
+            polygon_vertices.append((poly_index, v.numerator))
+        poly_index += 1
+    container.add_data(polygon_vertices, data_name="polygons", data_context=mdsf.KEY_CONTEXT_POLYGON_CORNER, data_type=mdsf.KEY_TYPE_POLYGON_CORNER_INDEX)
+    # 3. normals, skip it for now
+    if len(polygon_normals) > 0:
+        container.add_data(polygon_normals, data_name="normals", data_context=mdsf.KEY_CONTEXT_POLYGON_CORNER, data_type=mdsf.KEY_TYPE_NORMAL)
+    # 4. uv coordinates
+    for uv_layer in mesh.uv_layers:
+        uv_name = uv_layer.name
+        uv_data = []  # in the form [(p_index, s_index, u, v), ...]
+        current_polygon = 0
+        current_sample = 0
+        for d in uv_layer.data:
+            d_uv = d.uv
+            uv_data.append((current_polygon, current_sample, d_uv[0], d_uv[1]))
+            current_sample += 1
+            if current_sample >= poly_sizes[current_polygon]:
+                current_polygon += 1
+                current_sample = 0
+        container.add_data(uv_data, data_name=uv_name, data_context=mdsf.KEY_CONTEXT_POLYGON_CORNER, data_type=mdsf.KEY_TYPE_UV_COORDINATES)
+    # 5. vertex colors
+    # clear the mesh
+    bpy.data.meshes.remove(mesh)
+    # save data
+    if len(point_positions) > 0 and len(polygon_vertices) > 0:
+        saver.save_to_file(geo_path)
+        return geo_path
+    else:
         return None
 
 
@@ -839,36 +983,42 @@ def save_ges_item(progress, name_prefix, root, item, is_absolute, ges_path, scen
     item_name = form_item_name(item.name, name_prefix)
     if True:
         if item.type == "MESH" or item.type == "FONT" or item.type == "CURVE":
-            if item.hide is False:
+            hide_render = item.hide_render
+            hide_viewport = item.hide_viewport
+            if hide_render is False or hide_viewport is False:
                 should_finish = False
                 # saved_names.append(item.name)
                 saved_names.append(item)
                 geo_path = export_geo(item, item_name, ges_path)
                 if geo_path is not None:
                     item_xml = ET.SubElement(root, "polymesh", {"name": item.name, "path": ((geo_path if is_absolute else "\\\\" + os.path.relpath(geo_path, os.path.split(ges_path)[0])) if geo_path is not None else "")})
-                    export_object(item_xml, item, over_matrix, only_local)
+                    export_object(item_xml, item, (hide_render, hide_viewport), over_matrix, only_local)
                 else:
                     item_xml = ET.SubElement(root, "null", {"name": item.name})
-                    export_null(item_xml, item, only_local)
+                    export_null(item_xml, item, (hide_render, hide_viewport), only_local)
         elif item.type == "CAMERA":
             should_finish = False
             # saved_names.append(item.name)
             saved_names.append(item)
             item_xml = ET.SubElement(root, "camera", {"name": item.name, "render": normalize_name(str(bpy.context.scene.render.engine))})
             export_camera(item_xml, item.data, item)
-        elif item.type == "LAMP":
-            if item.hide is False:
+        elif item.type == "LIGHT":
+            hide_render = item.hide_render
+            hide_viewport = item.hide_viewport
+            if hide_render is False or hide_viewport is False:
                 should_finish = False
                 # saved_names.append(item.name)
                 saved_names.append(item)
                 item_xml = ET.SubElement(root, "light", {"name": item.name, "render": normalize_name(str(bpy.context.scene.render.engine))})
-                export_light(item_xml, item, item.data, only_local)
+                export_light(item_xml, item, item.data, (hide_render, hide_viewport), only_local)
         elif item.type == "EMPTY" or item.type == "ARMATURE":
             should_finish = False
+            hide_render = item.hide_render
+            hide_viewport = item.hide_viewport
             # saved_names.append(item.name)
             saved_names.append(item)
             item_xml = ET.SubElement(root, "null", {"name": item.name})
-            export_null(item_xml, item, only_local)
+            export_null(item_xml, item, (hide_render, hide_viewport), only_local)
     else:
         # print("Item " + item.name + " allready exported")
         pass
@@ -912,31 +1062,36 @@ def export_collection(progress, file_path, is_save_textures, is_texture_absolute
     dupli_parents = {}
     clear_dupli_list = []
     for i, ob_main in enumerate(all_selected):
-        if ob_main.parent and ob_main.parent.dupli_type in {'VERTS', 'FACES'}:
+        if ob_main.parent and ob_main.parent.instance_type in {'VERTS', 'FACES'}:
             continue
         total_list.append(ob_main)
-        if ob_main.dupli_type != 'NONE':
-            ob_main.dupli_list_create(bpy.context.scene)
-            clear_dupli_list.append(ob_main)
+        if ob_main.is_instancer:
+            # ob_main.dupli_list_create(bpy.context.scene)
+            inst_list = [(dup.instance_object.original, dup.matrix_world.copy())
+                            for dup in bpy.context.depsgraph.object_instances
+                            if dup.parent and dup.parent.original == ob_main]
+            # clear_dupli_list.append(ob_main)
             new_dupli_item = []
-            for dob in ob_main.dupli_list:
-                if dob.object not in total_list:
-                    total_list.append(dob.object)
-                if dob.object.parent is None:
-                    new_dupli_item.append((dob.object, dob.matrix))
+            for (dob, dob_matrix) in inst_list:
+                if dob not in total_list:
+                    total_list.append(dob)
+                if dob.parent is None:
+                    new_dupli_item.append((dob, dob_matrix))
             dupli_parents[ob_main] = new_dupli_item
 
     if len(total_list) > 0:
         selected_materials = []
+        material_names = []
         light_materials = []
         for obj in total_list:
-            if obj.type == "LAMP":
+            if obj.type == "LIGHT":
                 light_materials.append(obj.data)
             else:
                 obj_materials = obj.material_slots
                 for o_mat in obj_materials:
-                    if o_mat.material is not None and o_mat.material.node_tree is not None:
+                    if o_mat.material is not None and o_mat.material.node_tree is not None and not (o_mat.name in material_names):
                         selected_materials.append(o_mat.material)
+                        material_names.append(o_mat.name)
         # save selected materials
         if len(selected_materials) > 0:
             mat_file_path = conver_path_to_gem(file_path)
@@ -1001,3 +1156,7 @@ def save(operator, context, **kwargs):
         progress.leave_substeps()
 
     return {'FINISHED'}
+
+
+def test_function():
+    print("345")

@@ -194,7 +194,7 @@ class NodeTree(object):
             def raw_data(self):
                 return (self.get_name(), self.get_type(), self.get_value(), self.__parent.get_name())
 
-        def __init__(self, type, name, label):
+        def __init__(self, type, name, label, parent_tree):
             self.__logger = NodeTree.LoggerHelper()
             self.__type = type
             self.__name = name
@@ -207,6 +207,7 @@ class NodeTree(object):
             self.__parameter_name_to_index = {}
             self.__is_elementary = True
             self.__node_tree = None
+            self.__parent_tree = parent_tree
 
         def get_name(self):  # return the name of the node
             return self.__name
@@ -354,20 +355,50 @@ class NodeTree(object):
                         self.__logger.log("Node " + self.get_name() + " does not contains parameter with index " + str(param_id))
                         return None
 
-        def _add_to_xml(self, root):
+        def _add_to_xml(self, root, input_to_output_dict):
             n_data = {"name": self.__name}
             if len(self.__label) > 0:
                 n_data["label"] = self.__label
             node_xml = ET.SubElement(root, self.__type, n_data)
+
+            def get_source(node, port, connections, is_from_output):
+                for c in connections:
+                    if is_from_output:
+                        triple = c.get_output_by_input(node, port)
+                    else:
+                        triple = c.get_input_by_output(node, port)
+                    if triple is not None:
+                        return triple
+                return None
+
             # add inputs
             for inp in self.__inputs:
-                ET.SubElement(node_xml, "input", {"port": inp.get_name(),
-                                                  "type": inp.get_type(),
-                                                  "default": inp.get_value(True)})
+                # try to find source of the input node
+                key = (self.__name, inp.get_name())
+                source = input_to_output_dict[key] if key in input_to_output_dict else None
+                params_dict = {"port": inp.get_name(),
+                               "type": inp.get_type(),
+                               "default": inp.get_value(True)}
+                if source is not None:
+                    params_dict["source_node"] = source[0]
+                    params_dict["source_port"] = source[1]
+                    params_dict["source_external"] = str(source[2])
+                ET.SubElement(node_xml, "input", params_dict)
             # nex outputs
+            # get connections inside the node
+            inner_connections_count = 0
+            inner_connections = []
+            if not self.__is_elementary:
+                inner_connections_count = self.__node_tree.get_connections_count()
+                inner_connections = [self.__node_tree.get_connection(c_index) for c_index in range(inner_connections_count)]
             for otp in self.__outputs:
-                ET.SubElement(node_xml, "output", {"port": otp.get_name(),
-                                                   "type": otp.get_type()})
+                source = get_source(self.__name, otp.get_name(), inner_connections, False)
+                params_dict = {"port": otp.get_name(),
+                               "type": otp.get_type()}
+                if source is not None and source[2] is True:
+                    params_dict["source_node"] = source[0]
+                    params_dict["source_port"] = source[1]
+                ET.SubElement(node_xml, "output", params_dict)
             # parameters
             for param in self.__parameters:
                 p_param_dict = {"name": param[0],
@@ -381,7 +412,9 @@ class NodeTree(object):
 
     class Connection(object):
         def __init__(self, out_node, out_port_name, in_node, in_port_name, is_external=False, external_mode=0):  # mode=0 - input - to - input, mode=1 - output - to - output, 2 - pass-throw
-            # for external connection left node is output, right is input, even both of them of the one type
+            # for extrnal node:
+            # left-input ---- right-output if the inner nod connects to right border of the compund or this is pass=throw connection
+            # left-output ---- right-input if from the left is ht boundary of the compound
             self.__output_node_name = out_node.get_name()
             self.__output_port_name = out_port_name
             self.__input_node_name = in_node.get_name()
@@ -393,6 +426,25 @@ class NodeTree(object):
 
         def get_raw(self):
             return (self.__output_node_name, self.__output_port_name, self.__input_node_name, self.__input_port_name, self.__is_external, self.__external_mode)
+
+        def get_output_by_input(self, input_node, input_port):
+            '''Return the triple (node, port, is_external) if this connection of the form (node, port)<----->(input_node, input_port)
+            in the other case return None
+            '''
+            if self.__input_node_name == input_node and self.__input_port_name == input_port:
+                return (self.__output_node_name, self.__output_port_name, self.__is_external)
+            else:
+                return None
+
+        def get_input_by_output(self, output_node, output_port):
+            '''Return the pair (node, port) if this connection of the form (output_node, output_port)<------>(node, port)
+            in the other case return None
+            '''
+            if self.__external_mode == 1 or self.__external_mode == 2:
+                if self.__output_node_name == output_node and self.__output_port_name == output_port:
+                    return (self.__input_node_name, self.__input_port_name, self.__is_external)
+                else:
+                    return None
 
         def _add_to_xml(self, root):
             params_dict = {"out_node": self.__output_node_name,
@@ -442,7 +494,7 @@ class NodeTree(object):
         if self.__is_nodes_contains_name(name):
             self.__logger.log("Node tree contains node with name " + name)
         else:
-            new_node = NodeTree.Node(type, name, label)
+            new_node = NodeTree.Node(type, name, label, self)
             self.__nodes.append(new_node)
             self.__node_name_to_index[name] = len(self.__nodes) - 1
             return new_node
@@ -516,7 +568,7 @@ class NodeTree(object):
                         new_connection = NodeTree.Connection(self.__parent_node, external_input_name, in_node, input_port_name, True, 0)
                         self.__connections.append(new_connection)
                     else:
-                        self.__logger.log("Parent node does not contains input port " + external_input_name)
+                        self.__logger.log("Parent node " + self.__parent_node.get_name() + " does not contains input port " + external_input_name)
                 else:
                     self.__logger.log("Node " + input_node_name + " does not contains input port " + input_port_name)
             else:
@@ -548,17 +600,28 @@ class NodeTree(object):
                 new_connection = NodeTree.Connection(self.__parent_node, external_output_name, self.__parent_node, external_input_name, True, 2)
                 self.__connections.append(new_connection)
             else:
-                self.__logger.log("Parent node does not contains input port " + external_input_name + " or outpu port " + external_output_name)
+                self.__logger.log("Parent node " + self.__parent_node.get_name() + " does not contains input port " + external_input_name + " or output port " + external_output_name)
 
     def _add_to_xml(self, mat):
         # at first add nodes
+        # create dictionary with connections data in the form {(input_node, input_port): (output_node, output_port, is_External)}
+        input_to_output_dict = {}
+        for c in self.__connections:
+            raw = c.get_raw()
+            if raw[4] is False:
+                input_to_output_dict[(raw[2], raw[3])] = (raw[0], raw[1], raw[4])
+            else:
+                if raw[5] == 0 or raw[5] == 2:
+                    input_to_output_dict[(raw[2], raw[3])] = (raw[0], raw[1], raw[4])
+                elif raw[5] == 1:
+                    input_to_output_dict[(raw[0], raw[1])] = (raw[2], raw[3], raw[4])
         nodes_section = ET.SubElement(mat, "nodes")
         for node in self.__nodes:
-            node._add_to_xml(nodes_section)
+            node._add_to_xml(nodes_section, input_to_output_dict)
         # at second add connections
-        connections_section = ET.SubElement(mat, "connections")
-        for connectin in self.__connections:
-            connectin._add_to_xml(connections_section)
+        # connections_section = ET.SubElement(mat, "connections")
+        # for connectin in self.__connections:
+            # connectin._add_to_xml(connections_section)
 
 
 class Material(object):
@@ -590,6 +653,7 @@ class NodeTreeDescriptor(object):
         if self.__lib_name is None:
             self.__lib_name = "Unknown"
         self.__materials = []
+        self.__logger = NodeTree.LoggerHelper()
 
     def get_materials_count(self):
         return len(self.__materials)
@@ -673,54 +737,104 @@ class NodeTreeDescriptor(object):
         else:
             return None
 
-    def __read_node_tree(self, root, node_tree):
+    def __read_node_tree(self, root, node_tree, output_connections=[]):
+        # output_connections come from the parent node and has additional key: is_to_myself, which corresponds Passthrough mode
+        input_external_connections = []  # contains data in the form [(output_node, output_port, input_node, input_port), ...]
+        input_internal_connections = []
         for child in root:
             if child.tag == "nodes":  # this is nodes section
                 # iterate throw childs
                 for child_node in child:
                     node_type = child_node.tag
-                    node_name = child_node.attrib["name"]
-                    node_label = child_node.attrib["label"] if "label" in child_node.attrib.keys() else ""
-                    node = node_tree.add_node(node_type, node_name, node_label)
-                    # next add inputs, outputs and parametrs to the node
-                    for p in child_node:
-                        if p.tag == "input":
-                            input_type = p.attrib["type"]
-                            node.add_input(p.attrib["port"], input_type, self.__get_value(input_type, p.attrib["default"]))
-                        elif p.tag == "output":
-                            node.add_output(p.attrib["port"], p.attrib["type"])
-                        elif p.tag == "parameter":
-                            val_type = p.attrib["type"]
-                            node.add_parameter(p.attrib["name"], val_type, self.__get_value(val_type, p.attrib["value"]))
-                        elif p.tag == "node_tree":  # this node contains subtree
+                    if "name" in child_node.attrib:
+                        node_name = child_node.attrib["name"]
+                        node_label = child_node.attrib["label"] if "label" in child_node.attrib.keys() else ""
+                        node = node_tree.add_node(node_type, node_name, node_label)
+                        out_connections = []
+                        subtree_prop = None
+                        # next add inputs, outputs and parametrs to the node
+                        for p in child_node:
+                            if p.tag == "input":
+                                if "type" in p.attrib and "default" in p.attrib and "port" in p.attrib:
+                                    input_type = p.attrib["type"]
+                                    node.add_input(p.attrib["port"], input_type, self.__get_value(input_type, p.attrib["default"]))
+                                    # try to find connection to this input port
+                                    if "source_external" in p.attrib and "source_node" in p.attrib and "source_port" in p.attrib:
+                                        # this input port has connection
+                                        is_external = True if p.attrib["source_external"] == "True" else False
+                                        if is_external:
+                                            input_external_connections.append((p.attrib["source_node"], p.attrib["source_port"], node_name, p.attrib["port"]))
+                                        else:
+                                            input_internal_connections.append((p.attrib["source_node"], p.attrib["source_port"], node_name, p.attrib["port"]))
+                                else:
+                                    self.__logger.log("Node " + node_name + " does not contains proper data for input port. Skip it.")
+                            elif p.tag == "output":
+                                if "port" in p.attrib and "type" in p.attrib:
+                                    node.add_output(p.attrib["port"], p.attrib["type"])
+                                    # try to find connections to the output port, in fact external connections
+                                    if "source_node" in p.attrib and "source_port" in p.attrib:
+                                        out_connections.append((p.attrib["source_node"], p.attrib["source_port"], node_name, p.attrib["port"], p.attrib["source_node"] == node_name))
+                                else:
+                                    self.__logger.log("Node " + node_name + " does not contains proper data for output port. Skip it.")
+                            elif p.tag == "parameter":
+                                if "type" in p.attrib and "name" in p.attrib:
+                                    val_type = p.attrib["type"]
+                                    node.add_parameter(p.attrib["name"], val_type, self.__get_value(val_type, p.attrib["value"]))
+                                else:
+                                    self.__logger.log("Node " + node_name + " does not contains proper data for parameter. Skip it.")
+                            elif p.tag == "node_tree":  # this node contains subtree
+                                subtree_prop = p
+                        if subtree_prop is not None:
                             subtree = node.add_subtree()
-                            self.__read_node_tree(p, subtree)
-            elif child.tag == "connections":  # this is connections section
+                            self.__read_node_tree(subtree_prop, subtree, out_connections)
+                    else:
+                        self.__logger.log("Node does not contains name data. Skip it.")
+            elif child.tag == "connections":  # this is connections section, this section exist only on old version of the file
                 for c in child:
                     if c.tag == "connection":
-                        is_external = c.attrib["external"] == "True"
-                        if is_external:
-                            ext_mode = c.attrib["external_mode"]
-                            if ext_mode == "Input":
-                                node_tree.add_external_input_connection(c.attrib["in_node"], c.attrib["in_port"], c.attrib["out_port"])
-                            elif ext_mode == "Output":
-                                node_tree.add_external_output_connection(c.attrib["in_node"], c.attrib["in_port"], c.attrib["out_port"])
-                            elif ext_mode == "Passthrough":
-                                node_tree.add_external_throw_connection(c.attrib["in_port"], c.attrib["out_port"])
+                        if "in_node" in c.attrib and "in_port" in c.attrib and "out_node" in c.attrib and "out_port" in c.attrib:
+                            if "external" in c.attrib:
+                                is_external = c.attrib["external"] == "True"
+                            else:
+                                is_external = False
+                            if is_external:
+                                if "external_mode" in c.attrib:
+                                    ext_mode = c.attrib["external_mode"]
+                                else:
+                                    ext_mode = ""
+                                if ext_mode == "Input":
+                                    node_tree.add_external_input_connection(c.attrib["in_node"], c.attrib["in_port"], c.attrib["out_port"])
+                                elif ext_mode == "Output":
+                                    node_tree.add_external_output_connection(c.attrib["in_node"], c.attrib["in_port"], c.attrib["out_port"])
+                                elif ext_mode == "Passthrough":
+                                    node_tree.add_external_throw_connection(c.attrib["in_port"], c.attrib["out_port"])
+                            else:
+                                node_tree.add_connection(c.attrib["out_node"], c.attrib["out_port"], c.attrib["in_node"], c.attrib["in_port"])
                         else:
-                            node_tree.add_connection(c.attrib["out_node"], c.attrib["out_port"], c.attrib["in_node"], c.attrib["in_port"])
+                            self.__logger.log("Connection does not contains data about input and output ports and nodes. Skip it.")
+            # at last add connections from input and output ports
+            for c_data in input_internal_connections:
+                node_tree.add_connection(c_data[0], c_data[1], c_data[2], c_data[3])
+            for c_data in input_external_connections:
+                node_tree.add_external_input_connection(c_data[2], c_data[3], c_data[1])
+            for c_data in output_connections:
+                # each c_data is a four-tuple (n1, p1, n2, p2, key), where n2, p2 - actual output of the compount node, n1, p1 - node inside compound
+                if c_data[4]:
+                    node_tree.add_external_throw_connection(c_data[1], c_data[3])
+                else:
+                    node_tree.add_external_output_connection(c_data[0], c_data[1], c_data[3])
 
     def read_xml(self, file_path):
         tree = ET.parse(file_path)
         root = tree.getroot()
         # set library name
-        self.__lib_name = root.attrib["name"]
+        self.__lib_name = root.attrib["name"] if "name" in root.attrib else "Unknown"
         # next iterate throw node trees
         for node_tree in root:
-            if node_tree.tag == "node_tree":  # consider only node_tree segments. Other is impossible
-                material = self.add_material(node_tree.attrib["name"], node_tree.attrib["render"] if "render" in node_tree.attrib else None)
+            if node_tree.tag == "node_tree":  # consider only node_tree segments. Other seements unsupported
+                material = self.add_material(node_tree.attrib["name"] if "name" in node_tree.attrib else None, node_tree.attrib["render"] if "render" in node_tree.attrib else None)
                 # add nodes to material
-                self.__read_node_tree(node_tree, material)
+                self.__read_node_tree(node_tree, material, [])
 
 
 def example_create_and_save_node_tree():
@@ -754,6 +868,30 @@ def example_read_node_tree_from_file():
     doc.write_xml("example_material_copy.gem")
 
 
+def example_subnodes():
+    doc = NodeTreeDescriptor("Example library")
+    node_tree = doc.add_material()
+    out_node = node_tree.add_node("Output", "output_node")
+    out_node.add_input("Surface", "color4", Color4(0.8))
+    complex_node = node_tree.add_node("Complex", "node_with_subtree")
+    complex_node.add_output("out", "color4")
+    complex_node.add_input("in", "float", 0.0)
+    complex_node.add_input("in2", "float", 1.0)
+    complex_node.add_output("out2", "float")
+    subtree = complex_node.add_subtree()
+    convert_node = subtree.add_node("Converter", "convert_node")
+    convert_node.add_input("value", "float", 0.0)
+    convert_node.add_output("color", "color4")
+    subtree.add_external_input_connection("convert_node", "value", "in")
+    subtree.add_external_output_connection("convert_node", "color", "out")
+    subtree.add_external_throw_connection("in2", "out2")
+
+    node_tree.add_connection("node_with_subtree", "out", "output_node", "Surface")
+
+    doc.write_xml("example_subnodes.gem")
+
+
 if __name__ == "__main__":
     example_create_and_save_node_tree()
     example_read_node_tree_from_file()
+    example_subnodes()

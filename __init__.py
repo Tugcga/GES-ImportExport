@@ -1,19 +1,18 @@
+
 bl_info = {
     "name": "GES, GEM and GEO format",
     "author": "Shekn Itrch",
-    "version": (0, 0, 1),
-    "blender": (2, 79, 0),
+    "version": (0, 0, 2),
+    "blender": (2, 80, 0),
     "location": "File > Import-Export",
     "description": "Import-Export whole scene and material libraries to *.ges or *.gem format. Export only Cycles materials",
     "warning": "",
     "wiki_url": "",
-    "support": "COMMUNITY",
+    "support": 'COMMUNITY',
     "category": "Import-Export"}
 
 if "bpy" in locals():
     import importlib
-    '''if "import_ges" in locals():
-        importlib.reload(import_ges)'''
     if "export_ges" in locals():
         importlib.reload(export_ges)
 
@@ -28,9 +27,6 @@ from bpy.props import (
 from bpy_extras.io_utils import (
     ImportHelper,
     ExportHelper,
-    orientation_helper_factory,
-    path_reference_mode,
-    axis_conversion,
 )
 
 
@@ -99,9 +95,7 @@ class ExportGES(bpy.types.Operator, ExportHelper):
 
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportGES.bl_idname,
-                         text="General Export Scene(.ges)")
-
+    self.layout.operator(ExportGES.bl_idname, text="General Export Scene(.ges)")
 
 classes = (
     # ImportGES,
@@ -112,15 +106,11 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-
-    # bpy.types.INFO_MT_file_import.append(menu_func_import)
-    bpy.types.INFO_MT_file_export.append(menu_func_export)
+    bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
 
 def unregister():
-    # bpy.types.INFO_MT_file_import.remove(menu_func_import)
-    bpy.types.INFO_MT_file_export.remove(menu_func_export)
-
+    bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     for cls in classes:
         bpy.utils.unregister_class(cls)
 

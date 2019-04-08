@@ -3,7 +3,7 @@
 This addon export blender scene to ges-file - general description format for 3d-scenes. Features:
 
 * Export Cycles materials to *.gem files. This format is based on [General Node Tree Description](https://github.com/Tugcga/GeneralNodeTreeDescription)
-* Export all geometry to *.geo files. These files can store only static non-animated geometry
+* Export all geometry to *.geo files. This format is based on [Mesh Data Serialized Format](https://github.com/Tugcga/MeshDataSerializedFormat)
 * Export lights and cameras. If the light has Cycles shader, then this shader export as *.gem file
 * Export render settings
 * All objects exports with preserved hierarchy
@@ -12,7 +12,7 @@ Limitations:
 
 * No animations, skinning data and other rigs
 * Does not support import *.ges files, only export it
-* Works only with Blender 2.79 and next, released after april 2018
+* Works only with Blender 2.80
 
 ## How to use
 
@@ -37,4 +37,4 @@ For example, if we have the basic scene with one cube, one point light and one c
 * scene.gem with material of the cube object
 * scene_lights.gem with shader of the light
 
-and one directory scene_meshes with one object Cube.geo.
+and two directories: scene_meshes with one object Cube.geo and scene_lights_textures with under_bridge_1k.hdr (this texture used by background shader).
