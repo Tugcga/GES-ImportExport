@@ -386,6 +386,8 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return [("Space", "string", node.space)]
     elif node_type == "DISPLACEMENT":
         return [("Space", "string", node.space)]
+    elif node_type == "MAP_RANGE":
+        return [("Clamp", "bool", node.clamp)]
     else:
         return []
 
@@ -735,7 +737,7 @@ def export_camera(root, camera, camera_object):
     # export transform
     export_transform(root, camera_object)
     # export target position
-    dof_distance = camera.dof_distance
+    dof_distance = camera.dof.focus_distance
     target_ghost = None
     if abs(dof_distance) < 0.0001:
         target_ghost = [0, 0, -10, 1]
@@ -775,14 +777,15 @@ def export_camera(root, camera, camera_object):
     prop_dict["sensor_height"] = float_to_str(camera.sensor_height)
     prop_dict["dof_distance"] = float_to_str(dof_distance)
     if is_cycles:
-        prop_dict["aperture_type"] = normalize_name(camera.cycles.aperture_type)
-        if camera.cycles.aperture_type == "RADIUS":
-            prop_dict["aperture_size"] = float_to_str(camera.cycles.aperture_size)
-        elif camera.cycles.aperture_type == "FSTOP":
-            prop_dict["aperture_fstop"] = float_to_str(camera.cycles.aperture_fstop)
-        prop_dict["aperture_blades"] = str(camera.cycles.aperture_blades)
-        prop_dict["aperture_rotation"] = float_to_str(camera.cycles.aperture_rotation)
-        prop_dict["aperture_ratio"] = float_to_str(camera.cycles.aperture_ratio)
+        # prop_dict["aperture_type"] = normalize_name(camera.cycles.aperture_type)
+        # if camera.cycles.aperture_type == "RADIUS":
+            # prop_dict["aperture_size"] = float_to_str(camera.cycles.aperture_size)
+        # elif camera.cycles.aperture_type == "FSTOP":
+            # prop_dict["aperture_fstop"] = float_to_str(camera.cycles.aperture_fstop)
+        prop_dict["aperture_fstop"] = float_to_str(camera.dof.aperture_fstop)
+        prop_dict["aperture_blades"] = str(camera.dof.aperture_blades)
+        prop_dict["aperture_rotation"] = float_to_str(camera.dof.aperture_rotation)
+        prop_dict["aperture_ratio"] = float_to_str(camera.dof.aperture_ratio)
     ET.SubElement(root, "properties", prop_dict)
 
 
@@ -803,6 +806,7 @@ def export_render_settings(root):
     if is_cycles:
         # sampling
         cycles = bpy.context.scene.cycles
+        render = bpy.context.scene.render
         sampling_dict = {}
         sampling_dict["method"] = normalize_name(cycles.progressive)
         sampling_dict["pattern"] = normalize_name(cycles.sampling_pattern)
@@ -829,6 +833,8 @@ def export_render_settings(root):
         # light paths
         bounces_dict = {}
         bounces_dict["transparent_max_bounces"] = str(cycles.transparent_max_bounces)
+        bounces_dict["min_light_bounces"] = str(cycles.min_light_bounces)
+        bounces_dict["min_transparent_bounces"] = str(cycles.min_transparent_bounces)
         bounces_dict["max_bounces"] = str(cycles.max_bounces)
         bounces_dict["diffuse_bounces"] = str(cycles.diffuse_bounces)
         bounces_dict["glossy_bounces"] = str(cycles.glossy_bounces)
@@ -841,7 +847,7 @@ def export_render_settings(root):
         # film settings
         film_dict = {}
         film_dict["exposure"] = float_to_str(cycles.film_exposure)
-        film_dict["film_transparent"] = str(cycles.film_transparent)
+        film_dict["film_transparent"] = str(render.film_transparent)
         film_dict["film_transparent_glass"] = str(cycles.film_transparent_glass)
         film_dict["filter"] = normalize_name(cycles.pixel_filter_type)
         if cycles.pixel_filter_type == "BLACKMAN_HARRIS" or cycles.pixel_filter_type == "GAUSSIAN":
@@ -916,7 +922,9 @@ def export_geo(original_mesh, item_name, ges_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
     geo_path = dir_path + "\\" + item_name + ".geo"
-    mesh = original_mesh.to_mesh(bpy.context.depsgraph, True)
+    # mesh = original_mesh.to_mesh()  # bpy.context.depsgraph, True)
+    converter = original_mesh.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = converter.to_mesh()
     saver = mdsf.MeshSerializer()
     container = saver.create_container()
     point_positions = []  # each position should be tuple (x, y, z)
@@ -955,7 +963,8 @@ def export_geo(original_mesh, item_name, ges_path):
         container.add_data(uv_data, data_name=uv_name, data_context=mdsf.KEY_CONTEXT_POLYGON_CORNER, data_type=mdsf.KEY_TYPE_UV_COORDINATES)
     # 5. vertex colors
     # clear the mesh
-    bpy.data.meshes.remove(mesh)
+    # bpy.data.meshes.remove(mesh)
+    converter.to_mesh_clear()
     # save data
     if len(point_positions) > 0 and len(polygon_vertices) > 0:
         saver.save_to_file(geo_path)

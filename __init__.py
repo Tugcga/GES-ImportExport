@@ -2,7 +2,7 @@
 bl_info = {
     "name": "GES, GEM and GEO format",
     "author": "Shekn Itrch",
-    "version": (0, 0, 2),
+    "version": (0, 0, 3),
     "blender": (2, 80, 0),
     "location": "File > Import-Export",
     "description": "Import-Export whole scene and material libraries to *.ges or *.gem format. Export only Cycles materials",
