@@ -388,6 +388,8 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return [("Space", "string", node.space)]
     elif node_type == "MAP_RANGE":
         return [("Clamp", "bool", node.clamp)]
+    elif node_type == "TEX_WHITE_NOISE":
+        return [("Dimensions", "string", node.dimensions)]
     else:
         return []
 
@@ -414,7 +416,7 @@ def add_node_to_tree(tree, node, nodes_counter, is_texture_absolute_path=False, 
             # create default value
             default = get_blender_default_value(bl_input)
             if default is not None:
-                if normalize_node_type(node.type) == "VectorMath" or normalize_node_type(node.type) == "Math" or (normalize_node_type(node.type) == "MixShader" and str(bl_input.name) != "Fac") or normalize_node_type(node.type) == "AddShader":  # for Math input ports (both Value in default) convert to Value1 and Value2
+                if (normalize_node_type(node.type) == "VectorMath" and str(bl_input.name) != "Scale") or normalize_node_type(node.type) == "Math" or (normalize_node_type(node.type) == "MixShader" and str(bl_input.name) != "Fac") or normalize_node_type(node.type) == "AddShader":  # for Math input ports (both Value in default) convert to Value1 and Value2
                     input_index = input_index + 1
                     td_node.add_input(str(bl_input.name) + str(input_index), t, default)
                 else:
@@ -447,7 +449,13 @@ def get_in_socket_index(node, in_socket):
 
 
 def get_exeptional_suffix(node, in_socket):
-    if normalize_node_type(node.type) == "VectorMath" or normalize_node_type(node.type) == "Math" or normalize_node_type(node.type) == "AddShader":
+    if normalize_node_type(node.type) == "Math" or normalize_node_type(node.type) == "AddShader":
+        index = get_in_socket_index(node, in_socket)
+        if index is not None:
+            return str(index + 1)
+        else:
+            return ""
+    elif normalize_node_type(node.type) == "VectorMath" and in_socket.name != "Scale":
         index = get_in_socket_index(node, in_socket)
         if index is not None:
             return str(index + 1)
@@ -743,6 +751,7 @@ def export_camera(root, camera, camera_object):
         target_ghost = [0, 0, -10, 1]
     else:
         target_ghost = [0, 0, -1 * dof_distance, 1]
+    use_dof = camera.dof.use_dof
     ET.SubElement(root, "target", {"position": vector_to_str(mult_matrix_to_vector(conver_matrix_to_arrays(camera_object.matrix_world), target_ghost))})
     prop_dict = {}
     # lens parameters
@@ -776,6 +785,7 @@ def export_camera(root, camera, camera_object):
     prop_dict["sensor_width"] = float_to_str(camera.sensor_width)
     prop_dict["sensor_height"] = float_to_str(camera.sensor_height)
     prop_dict["dof_distance"] = float_to_str(dof_distance)
+    prop_dict["use_dof"] = str(use_dof)
     if is_cycles:
         # prop_dict["aperture_type"] = normalize_name(camera.cycles.aperture_type)
         # if camera.cycles.aperture_type == "RADIUS":
