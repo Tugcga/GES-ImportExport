@@ -200,11 +200,14 @@ def convert_file_path(raw_path, is_texture_absolute_path, is_texture_copy, lib_n
 def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath):
     node_type = str(node.type)
     if node_type == "TEX_VORONOI":
-        return [("Coloring", "string", node.coloring),
-                ("Distance", "string", node.distance),
-                ("Feature", "string", node.feature)]
+        return [("Voronoi Dimensions", "string", node.voronoi_dimensions),
+                ("Feature", "string", node.feature),
+                ("Distance", "string", node.distance)]
+    elif node_type == "TEX_NOISE":
+        return [("Noise Dimensions", "string", node.noise_dimensions)]
     elif node_type == "TEX_MUSGRAVE":
-        return [("Musgrave Type", "string", node.musgrave_type)]
+        return [("Musgrave Dimensions", "string", node.musgrave_dimensions),
+                ("Musgrave Type", "string", node.musgrave_type)]
     elif node_type == "TEX_POINTDENSITY":
         return [("Space", "string", node.space),
                 ("Interpolation", "string", node.interpolation),
@@ -214,7 +217,7 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
                 ("Particle Color Source", "string", node.particle_color_source)]
     elif node_type == "TEX_IMAGE":
         file_name = get_file_path(node.image, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
-        to_return = [("Color Space", "string", node.color_space),
+        to_return = [# ("Color Space", "string", node.color_space),
                      ("Interpolation", "string", node.interpolation),
                      ("Extension", "string", node.extension),
                      ("Projection", "string", node.projection),
@@ -234,7 +237,7 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
                 ("Squash Frequency", "int", node.squash_frequency)]
     elif node_type == "TEX_ENVIRONMENT":
         file_name = get_file_path(node.image, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
-        to_return = [("Color Space", "string", node.color_space),
+        to_return = [#("Color Space", "string", node.color_space),
                      ("Interpolation", "string", node.interpolation),
                      ("Projection", "string", node.projection)]
         if file_name is None:
@@ -307,10 +310,14 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
             c_array = []
             for p_index in range(COLOR_CURVE_SAMPLES):
                 pos = float(p_index) / float(COLOR_CURVE_SAMPLES - 1)
-                r_array.append(gntd.Vector2(pos, r_curve.evaluate(pos)))
-                g_array.append(gntd.Vector2(pos, g_curve.evaluate(pos)))
-                b_array.append(gntd.Vector2(pos, b_curve.evaluate(pos)))
-                c_array.append(gntd.Vector2(pos, c_curve.evaluate(pos)))
+                # r_array.append(gntd.Vector2(pos, r_curve.evaluate(pos)))
+                # g_array.append(gntd.Vector2(pos, g_curve.evaluate(pos)))
+                # b_array.append(gntd.Vector2(pos, b_curve.evaluate(pos)))
+                # c_array.append(gntd.Vector2(pos, c_curve.evaluate(pos)))
+                r_array.append(gntd.Vector2(pos, node.mapping.evaluate(r_curve, pos)))
+                g_array.append(gntd.Vector2(pos, node.mapping.evaluate(g_curve, pos)))
+                b_array.append(gntd.Vector2(pos, node.mapping.evaluate(b_curve, pos)))
+                c_array.append(gntd.Vector2(pos, node.mapping.evaluate(c_curve, pos)))
             return [("R", "vectorArray", gntd.VectorArray(r_array)), ("G", "vectorArray", gntd.VectorArray(g_array)), ("B", "vectorArray", gntd.VectorArray(b_array)), ("C", "vectorArray", gntd.VectorArray(c_array))]
         else:  # save only points int hte curves
             # curve R
@@ -351,14 +358,14 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
                 ("Y", "vectorArray", gntd.VectorArray(y_array)),
                 ("Z", "vectorArray", gntd.VectorArray(z_array))]
     elif node_type == "MAPPING":
-        return [("Vector Type", "string", node.vector_type),
-                ("Translation", "vector3", gntd.Vector3(node.translation[0], node.translation[1], node.translation[2])),
-                ("Rotation", "vector3", gntd.Vector3(node.rotation[0], node.rotation[1], node.rotation[2])),
-                ("Scale", "vector3", gntd.Vector3(node.scale[0], node.scale[1], node.scale[2])),
-                ("Use Min", "bool", node.use_min),
-                ("Use Max", "bool", node.use_max),
-                ("Min", "vector3", gntd.Vector3(node.min[0], node.min[1], node.min[2])),
-                ("Max", "vector3", gntd.Vector3(node.max[0], node.max[1], node.max[2]))]
+        return [("Vector Type", "string", node.vector_type)]
+                # ("Translation", "vector3", gntd.Vector3(node.translation[0], node.translation[1], node.translation[2])),
+                # ("Rotation", "vector3", gntd.Vector3(node.rotation[0], node.rotation[1], node.rotation[2])),
+                # ("Scale", "vector3", gntd.Vector3(node.scale[0], node.scale[1], node.scale[2])),
+                # ("Use Min", "bool", node.use_min),
+                # ("Use Max", "bool", node.use_max),
+                # ("Min", "vector3", gntd.Vector3(node.min[0], node.min[1], node.min[2])),
+                # ("Max", "vector3", gntd.Vector3(node.max[0], node.max[1], node.max[2]))]
     elif node_type == "NORMAL_MAP":
         return [("Space", "string", node.space), ("Attribute", "string", node.uv_map)]
     elif node_type == "NORMAL":
@@ -389,7 +396,9 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
     elif node_type == "MAP_RANGE":
         return [("Clamp", "bool", node.clamp)]
     elif node_type == "TEX_WHITE_NOISE":
-        return [("Dimensions", "string", node.dimensions)]
+        return [("Noise Dimensions", "string", node.noise_dimensions)]
+    elif node_type == "VERTEX_COLOR":
+        return [("Layer Name", "string", node.layer_name)]
     else:
         return []
 

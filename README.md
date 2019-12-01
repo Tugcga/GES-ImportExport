@@ -12,7 +12,7 @@ Limitations:
 
 * No animations, skinning data and other rigs
 * Does not support import *.ges files, only export it
-* Works only with Blender 2.81, because there are some API difference between 2.81 and 2.80
+* Works only with Blender 2.82, because there are some API difference between 2.82 and 2.81
 
 ## How to use
 
