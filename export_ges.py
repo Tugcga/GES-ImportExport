@@ -247,7 +247,7 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
     elif node_type == "TEX_SKY":
         return [("Sky Type", "string", node.sky_type), ("Sun Direction", "vector3", gntd.Vector3(node.sun_direction[0], node.sun_direction[1], node.sun_direction[2])), ("Turbidity", "float", node.turbidity), ("Ground Albedo", "float", node.ground_albedo)]
     elif node_type == "TEX_WAVE":
-        return [("Wave Type", "string", node.wave_type), ("Profile", "string", node.wave_profile)]
+        return [("Wave Type", "string", node.wave_type), ("Bands Direction", "string", node.bands_direction), ("Rings Direction", "string", node.rings_direction), ("Profile", "string", node.wave_profile)]
     elif node_type == "TEX_IES":
         file_name = convert_file_path(node.filepath, is_texture_absolute_path, is_texture_copy, lib_name, gem_filepath)
         if file_name is None:
@@ -366,6 +366,8 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
                 # ("Use Max", "bool", node.use_max),
                 # ("Min", "vector3", gntd.Vector3(node.min[0], node.min[1], node.min[2])),
                 # ("Max", "vector3", gntd.Vector3(node.max[0], node.max[1], node.max[2]))]
+    elif node_type == "VECTOR_ROTATE":
+        return [("Rotation Type", "string", node.rotation_type), ("Invert", "bool", node.invert)]
     elif node_type == "NORMAL_MAP":
         return [("Space", "string", node.space), ("Attribute", "string", node.uv_map)]
     elif node_type == "NORMAL":
@@ -394,7 +396,9 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
     elif node_type == "DISPLACEMENT":
         return [("Space", "string", node.space)]
     elif node_type == "MAP_RANGE":
-        return [("Clamp", "bool", node.clamp)]
+        return [("Clamp", "bool", node.clamp), ("Interpolation Type", "string", node.interpolation_type)]
+    elif node_type == "CLAMP":
+        return [("Clamp Type", "string", node.clamp_type)]
     elif node_type == "TEX_WHITE_NOISE":
         return [("Noise Dimensions", "string", node.noise_dimensions)]
     elif node_type == "VERTEX_COLOR":
@@ -844,7 +848,7 @@ def export_render_settings(root):
             sampling_dict["mesh_light_samples"] = str(cycles.mesh_light_samples)
             sampling_dict["subsurface_samples"] = str(cycles.subsurface_samples)
             sampling_dict["volume_samples"] = str(cycles.volume_samples)
-        sampling_dict["volume_step_size"] = float_to_str(cycles.volume_step_size)
+        sampling_dict["volume_step_rate"] = float_to_str(cycles.volume_step_rate)
         sampling_dict["volume_max_steps"] = str(cycles.volume_max_steps)
         sampling_dict["sample_all_lights_direct"] = str(cycles.sample_all_lights_direct)
         sampling_dict["sample_all_lights_indirect"] = str(cycles.sample_all_lights_indirect)
@@ -1010,7 +1014,7 @@ def save_ges_item(progress, name_prefix, root, item, is_absolute, ges_path, scen
     # if item not in saved_names:
     item_name = form_item_name(item.name, name_prefix)
     if True:
-        if item.type == "MESH" or item.type == "FONT" or item.type == "CURVE":
+        if item.type == "MESH" or item.type == "FONT":  # or item.type == "CURVE":
             hide_render = item.hide_render
             hide_viewport = item.hide_viewport
             if hide_render is False or hide_viewport is False:
@@ -1047,6 +1051,7 @@ def save_ges_item(progress, name_prefix, root, item, is_absolute, ges_path, scen
             saved_names.append(item)
             item_xml = ET.SubElement(root, "null", {"name": item.name})
             export_null(item_xml, item, (hide_render, hide_viewport), only_local)
+        # TODO: export openVDB containers
     else:
         # print("Item " + item.name + " allready exported")
         pass

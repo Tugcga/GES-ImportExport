@@ -61,21 +61,21 @@ class ExportGES(bpy.types.Operator, ExportHelper):
     bl_options = {'PRESET'}
 
     filename_ext = ".ges"
-    filter_glob = StringProperty(
+    filter_glob: StringProperty(
         default="*.ges",
         options={'HIDDEN'},
     )
-    mode = EnumProperty(items=(("ALL_SCENE", "All scene", ""),
+    mode: EnumProperty(items=(("ALL_SCENE", "All scene", ""),
                                ("SELECTED_OBJECTS", "Selected objects", ""),
                                ("ALL_MATERIALS", "All materials", ""),
                                ("SELECTED_MATERIAL", "Selected material", "")),
                         name="Mode",
                         description="",
                         default="ALL_SCENE")
-    is_copy_textures = BoolProperty(name="Copy textures",
+    is_copy_textures: BoolProperty(name="Copy textures",
                                     description="",
                                     default=True)
-    texture_path_mode = EnumProperty(items=(("RELATIVE", "Relative", ""),
+    texture_path_mode: EnumProperty(items=(("RELATIVE", "Relative", ""),
                                             ("ABSOLUTE", "Absolute", "")),
                                      name="Texture and meshes path mode",
                                      description="",
