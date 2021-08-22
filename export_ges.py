@@ -678,6 +678,17 @@ def export_ray_visibility(vis, use_shadow=False):
     return prop_dict
 
 
+def export_object_ray_visibility(object):
+    prop_dict = {}
+    prop_dict["camera"] = str(object.visible_camera)
+    prop_dict["diffuse"] = str(object.visible_diffuse)
+    prop_dict["glossy"] = str(object.visible_glossy)
+    prop_dict["transmission"] = str(object.visible_transmission)
+    prop_dict["scatter"] = str(object.visible_volume_scatter)
+    prop_dict["shadow"] = str(object.visible_shadow)
+    return prop_dict
+
+
 def export_background(root):
     world = bpy.context.scene.world
     if world is not None:
@@ -699,6 +710,7 @@ def export_background(root):
             prop_dict["volume_interpolation"] = normalize_name(world.cycles.volume_interpolation)
             prop_dict["homogeneous_volume"] = str(world.cycles.homogeneous_volume)
             # ray visibility
+            # ET.SubElement(world_xml, "ray_visibility", export_ray_visibility(world.cycles_visibility))
             ET.SubElement(world_xml, "ray_visibility", export_ray_visibility(world.cycles_visibility))
         ET.SubElement(world_xml, "properties", prop_dict)
 
@@ -717,9 +729,10 @@ def export_object(root, object, hide_mode=(False, False), over_matrix=None, only
         mat_data["material_" + str(mat_index)] = materials[mat_index].name
     prop_materials = ET.SubElement(root, "material", mat_data)
     if bpy.context.scene.render.engine == "CYCLES":
-        ET.SubElement(root, "ray_visibility", export_ray_visibility(object.cycles_visibility, True))
+        # ET.SubElement(root, "ray_visibility", export_ray_visibility(object.cycles_visibility, True))
+        ET.SubElement(root, "ray_visibility", export_object_ray_visibility(object))
         prop_dict = {}
-        prop_dict["shadow_catcher"] = str(object.cycles.is_shadow_catcher)
+        prop_dict["shadow_catcher"] = str(object.is_shadow_catcher)
         # prop_dict["holdout"] = str(object.cycles.is_holdout)
         prop_dict["camera_cull"] = str(object.cycles.use_camera_cull)
         prop_dict["distance_cull"] = str(object.cycles.use_distance_cull)
