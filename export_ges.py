@@ -357,6 +357,14 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
         return [("X", "vectorArray", gntd.VectorArray(x_array)),
                 ("Y", "vectorArray", gntd.VectorArray(y_array)),
                 ("Z", "vectorArray", gntd.VectorArray(z_array))]
+    elif node_type == "CURVE_FLOAT":
+        node.mapping.initialize()
+        curve = node.mapping.curves[0]
+        array = []
+        for p_index in range(COLOR_CURVE_SAMPLES):
+            pos = float(p_index) / float(COLOR_CURVE_SAMPLES - 1)
+            array.append(gntd.Vector2(pos, node.mapping.evaluate(curve, pos)))
+        return [("Points", "vectorArray", gntd.VectorArray(array))]
     elif node_type == "MAPPING":
         return [("Vector Type", "string", node.vector_type)]
                 # ("Translation", "vector3", gntd.Vector3(node.translation[0], node.translation[1], node.translation[2])),
@@ -396,7 +404,7 @@ def get_node_parameters(node, is_texture_absolute_path, is_texture_copy, lib_nam
     elif node_type == "DISPLACEMENT":
         return [("Space", "string", node.space)]
     elif node_type == "MAP_RANGE":
-        return [("Clamp", "bool", node.clamp), ("Interpolation Type", "string", node.interpolation_type)]
+        return [("Clamp", "bool", node.clamp), ("Interpolation Type", "string", node.interpolation_type), ("Data Type", "string", node.data_type)]
     elif node_type == "CLAMP":
         return [("Clamp Type", "string", node.clamp_type)]
     elif node_type == "TEX_WHITE_NOISE":
@@ -421,11 +429,20 @@ def add_node_to_tree(tree, node, nodes_counter, is_texture_absolute_path=False, 
     n_name = node_name(node)
     '''if node_type == "Group":
         node_name += str(nodes_counter)'''
+    ignore_float_inputs = False
+    ignore_vector_inputs = False
+    if node_type == "MapRange":
+        data_type = node.data_type
+        if data_type == "FLOAT_VECTOR":
+            node_type = "VectorMapRange"
+            ignore_float_inputs = True
+        else:
+            ignore_vector_inputs = True
     td_node = tree.add_node(node_type, n_name, node.label)
     input_index = 0
     for bl_input in node.inputs:
         t = get_blender_type(str(bl_input.type))
-        if t is not None:
+        if t is not None and (not (ignore_float_inputs and t == "float") and not (ignore_vector_inputs and t == "vector3")):
             # create default value
             default = get_blender_default_value(bl_input)
             if default is not None:
@@ -844,27 +861,17 @@ def export_render_settings(root):
         cycles = bpy.context.scene.cycles
         render = bpy.context.scene.render
         sampling_dict = {}
-        sampling_dict["method"] = normalize_name(cycles.progressive)
+        # sampling_dict["method"] = normalize_name(cycles.progressive)
         sampling_dict["pattern"] = normalize_name(cycles.sampling_pattern)
         sampling_dict["clamp_direct"] = float_to_str(cycles.sample_clamp_direct)
         sampling_dict["clamp_indirect"] = float_to_str(cycles.sample_clamp_indirect)
         sampling_dict["light_threshold"] = float_to_str(cycles.light_sampling_threshold)
         sampling_dict["seed"] = str(cycles.seed)
-        if cycles.progressive == "PATH":
-            sampling_dict["samples"] = str(cycles.samples)
-        elif cycles.progressive == "BRANCHED_PATH":
-            sampling_dict["samples"] = str(cycles.aa_samples)
-            sampling_dict["diffuse_samples"] = str(cycles.diffuse_samples)
-            sampling_dict["glossy_samples"] = str(cycles.glossy_samples)
-            sampling_dict["transmission_samples"] = str(cycles.transmission_samples)
-            sampling_dict["ao_samples"] = str(cycles.ao_samples)
-            sampling_dict["mesh_light_samples"] = str(cycles.mesh_light_samples)
-            sampling_dict["subsurface_samples"] = str(cycles.subsurface_samples)
-            sampling_dict["volume_samples"] = str(cycles.volume_samples)
+        sampling_dict["samples"] = str(cycles.samples)
         sampling_dict["volume_step_rate"] = float_to_str(cycles.volume_step_rate)
         sampling_dict["volume_max_steps"] = str(cycles.volume_max_steps)
-        sampling_dict["sample_all_lights_direct"] = str(cycles.sample_all_lights_direct)
-        sampling_dict["sample_all_lights_indirect"] = str(cycles.sample_all_lights_indirect)
+        # sampling_dict["sample_all_lights_direct"] = str(cycles.sample_all_lights_direct)
+        # sampling_dict["sample_all_lights_indirect"] = str(cycles.sample_all_lights_indirect)
         sampling_xml = ET.SubElement(render_xml, "sampling", sampling_dict)
         # light paths
         bounces_dict = {}
@@ -893,25 +900,17 @@ def export_render_settings(root):
         pref_dict = {}
         pref_dict["threads_mode"] = normalize_name(render.threads_mode)
         pref_dict["threads"] = str(render.threads)
-        pref_dict["tile_order"] = normalize_name(cycles.tile_order)
-        pref_dict["tile_x"] = str(render.tile_x)
-        pref_dict["tile_y"] =str(render.tile_y)
-        pref_dict["progressive"] = str(cycles.use_progressive_refine)
+        # pref_dict["tile_order"] = normalize_name(cycles.tile_order)
+        # pref_dict["tile_x"] = str(render.tile_x)
+        # pref_dict["tile_y"] =str(render.tile_y)
+        pref_dict["tile_size"] =str(cycles.tile_size)
+        pref_dict["auto_tiling"] =str(cycles.use_auto_tile)
+        # pref_dict["progressive"] = str(cycles.use_progressive_refine)
         pref_dict["spatial_splits"] = str(cycles.debug_use_spatial_splits)
         pref_dict["hair_bvh"] = str(cycles.debug_use_hair_bvh)
         pref_dict["bvh_step"] = str(cycles.debug_bvh_time_steps)
         performance_xml = ET.SubElement(render_xml, "performance", pref_dict)
         # dnoising
-        '''denois_xml = ET.SubElement(render_xml, "denoising", {"use_denoising": str(scene.use_denoising)})
-        if scene.use_denoising:
-            prop_radius = ET.SubElement(denois_xml, "property", {"radius": str(scene.denoising_radius)})
-            prop_strength = ET.SubElement(denois_xml, "property", {"strength": float_to_str(scene.denoising_strength)})
-            prop_feature_strength = ET.SubElement(denois_xml, "property", {"feature_strength": float_to_str(scene.denoising_feature_strength)})
-            prop_relative = ET.SubElement(denois_xml, "property", {"relative_filter": str(scene.denoising_relative_pca)})
-            prop_diffuse = ET.SubElement(denois_xml, "property", {"diffuse_direct": str(scene.denoising_diffuse_direct), "diffuse_indirect": str(scene.denoising_diffuse_indirect)})
-            prop_glossy = ET.SubElement(denois_xml, "property", {"glossy_direct": str(scene.denoising_glossy_direct), "glossy_indirect": str(scene.denoising_glossy_indirect)})
-            prop_transmission = ET.SubElement(denois_xml, "property", {"transmission_direct": str(scene.denoising_transmission_direct), "transmission_indirect": str(scene.denoising_transmission_indirect)})
-            prop_subsurface = ET.SubElement(denois_xml, "property", {"subsurface_direct": str(scene.denoising_subsurface_direct), "subsurface_indirect": str(scene.denoising_subsurface_indirect)})'''
         # simpify
         simpl_dict = {}
         simpl_dict["use_simplify"] = str(render.use_simplify)
@@ -922,35 +921,6 @@ def export_render_settings(root):
             simpl_dict["distance_cull_margin"] = float_to_str(cycles.distance_cull_margin)
             simpl_dict["ao_bounces"] = str(cycles.ao_bounces_render)
         simplify_xml = ET.SubElement(render_xml, "simplify", simpl_dict)
-
-
-'''def export_geo_pickle(mesh, item_name, ges_path):
-    dir_path = os.path.split(ges_path)[0] + "\\" + os.path.splitext(os.path.basename(ges_path))[0] + "_meshes"
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-    geo_path = dir_path + "\\" + item_name + ".geo"
-    new_mesh = mesh.to_mesh(bpy.context.scene, True, "RENDER")
-    p_mesh = pmd.PolymeshDescription(mesh.name)
-    p_mesh.add_vertices([v.co for v in new_mesh.vertices], [v.normal for v in new_mesh.vertices])
-    for bl_polygon in new_mesh.polygons:
-        p_mesh.add_polygon([v.numerator for v in bl_polygon.vertices], bl_polygon.normal)
-    # p_mesh.add_uvs(new_mesh.uv_layers)
-    for uv_layer in new_mesh.uv_layers:
-        uv_name = uv_layer.name
-        uv_data = []
-        for d in uv_layer.data:
-            d_uv = d.uv
-            uv_data.append(d_uv[0])
-            uv_data.append(d_uv[1])
-        p_mesh.add_uv(uv_data, uv_name)
-    if p_mesh.get_vertex_count() > 0 and p_mesh.get_polygons_count() > 0:
-        with open(geo_path, "wb") as file:
-            pickle.dump(p_mesh, file, protocol=2)
-        bpy.data.meshes.remove(new_mesh)
-        return geo_path
-    else:
-        bpy.data.meshes.remove(new_mesh)
-        return None'''
 
 
 def export_geo(original_mesh, item_name, ges_path):
